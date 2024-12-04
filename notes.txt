@@ -1,0 +1,2188 @@
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "START_TRANSLATION") {
+    const language = message.language;
+    /*const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) {
+      console.error("Web Audio API is not supported in this browser.");
+      throw new Error("AudioContext is not available.");
+    }
+    const audioContext = new AudioContext();*/
+
+    // Start capturing audio from the meeting tab
+    chrome.tabCapture.capture({ audio: true, video: false }, (stream) => {
+      if (stream) {
+        const source = audioContext.createMediaStreamSource(stream);
+
+        // Load the audio-processor.js file as a module
+        audioContext.audioWorklet
+          .addModule("audio-processor.js")
+          .then(() => {
+            const workletNode = new AudioWorkletNode(
+              audioContext,
+              "audio-processor"
+            );
+
+            // Listen for processed audio data
+            workletNode.port.onmessage = async (event) => {
+              const rawAudioData = event.data; // This is the raw audio buffer
+              const encodedAudioData = btoa(
+                String.fromCharCode.apply(null, new Uint8Array(rawAudioData))
+              );
+              const dataPayload = { audio: encodedAudioData };
+
+              // Process with Gemini Nano
+              const audioData = await processWithGeminiNano(dataPayload);
+              try {
+                // Send audioData to transcription and translation API
+                const translatedText = await sendForTranslation(
+                  audioData,
+                  language
+                );
+
+                // Display subtitles in the meeting tab
+                chrome.scripting.executeScript({
+                  target: { tabId: sender.tab.id },
+                  func: showSubtitles,
+                  args: [translatedText],
+                });
+              } catch (error) {
+                console.error(
+                  "Error during transcription or translation:",
+                  error
+                );
+              }
+            };
+
+            // Connect audio stream to the worklet
+            source.connect(workletNode);
+            workletNode.connect(audioContext.destination);
+          })
+          .catch((error) =>
+            console.error("Failed to load audio processor:", error)
+          );
+      } else {
+        console.error("Failed to capture tab audio");
+      }
+    });
+  }
+});
+
+// Function to handle transcription and translation
+async function sendForTranslation(audioData, language) {
+  try {
+    // Using Chrome Speech to Text API
+    const encodedAudioData = btoa(
+      String.fromCharCode.apply(null, new Uint8Array(audioData))
+    );
+    const audioData_2 = { audio: encodedAudioData };
+
+    const processedAudio = await processWithGeminiNano(audioData_2);
+    const transcription = await sendForTranscription(processedAudio); // Audio to Text
+
+    // Use Chrome AI Translation API for translation
+    const translatedText = await translateText(transcription, {
+      targetLanguage: language,
+    }); // Translation API
+
+    return translatedText; // Return the translated subtitle
+  } catch (error) {
+    console.error("Error in AI processing:", error);
+    throw error;
+  }
+}
+
+async function sendForTranscription(audioData) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+    const url = `https://speech.googleapis.com/v1p1beta1/speech:recognize?key=${apiKey}`;
+
+    const requestPayload = {
+      config: {
+        encoding: "LINEAR16",
+        sampleRateHertz: 16000,
+        languageCode: "hi-IN", // Replace with the speaker's language
+      },
+      audio: {
+        content: audioData, // Base64-encoded audio data
+      },
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.results[0].alternatives[0].transcript;
+  } catch (error) {
+    console.error("Speech-to-Text API Error:", error);
+    throw error;
+  }
+}
+
+async function translateText(text, targetLanguage) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+    const url = `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`;
+
+    const requestPayload = {
+      q: text,
+      target: targetLanguage,
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.data.translations[0].translatedText;
+  } catch (error) {
+    console.error("Translation API Error:", error);
+    throw error;
+  }
+}
+async function processWithGeminiNano(data) {
+  try {
+    const apiKey = "AIzaSyDMxb7QU1OXDvhnn0GSI2OgbnhaGnc_hTQ"; // Replace with your Gemini Nano key
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+
+    const result = await response.json();
+    return result; // Process the response as needed
+  } catch (error) {
+    console.error("Gemini Nano API Error:", error);
+    throw error;
+  }
+}
+
+// Inject subtitles into the current tab
+function showSubtitles(subtitle) {
+  let subtitleBox = document.getElementById("realTimeSubtitle");
+  if (!subtitleBox) {
+    subtitleBox = document.createElement("div");
+    subtitleBox.id = "realTimeSubtitle";
+    subtitleBox.style.position = "fixed";
+    subtitleBox.style.bottom = "20px";
+    subtitleBox.style.left = "20px";
+    subtitleBox.style.backgroundColor = "rgba(0,0,0,0.8)";
+    subtitleBox.style.color = "white";
+    subtitleBox.style.padding = "10px";
+    subtitleBox.style.borderRadius = "5px";
+    subtitleBox.style.zIndex = "9999";
+    document.body.appendChild(subtitleBox);
+  }
+  subtitleBox.innerText = subtitle;
+}
+
+/*chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "START_TRANSLATION") {
+    // Check if the tabCapture permission is granted
+    chrome.permissions.contains({ permissions: ["tabCapture"] }, (result) => {
+      if (result) {
+        console.log("tabCapture permission is granted.");
+      } else {
+        console.error("tabCapture permission is NOT granted.");
+      }
+    });
+
+    const language = message.language;
+    if (!chrome.tabCapture) {
+      console.error(
+        "chrome.tabCapture is not available. Ensure the extension has the correct permissions."
+      );
+    } else {
+      console.log("chrome.tabCapture is available.");
+    }
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs.length > 0) {
+        console.log("Active tab URL:", tabs[0].url); // Ensure this matches a valid URL
+      } else {
+        console.error("No active tab found.");
+      }
+    });
+
+    chrome.tabCapture.capture({ audio: true, video: false }, (stream) => {
+      if (chrome.runtime.lastError) {
+        console.error("Tab capture error:", chrome.runtime.lastError.message);
+        sendResponse({
+          success: false,
+          error: chrome.runtime.lastError.message,
+        });
+        return;
+      }
+      if (stream) {
+        const streamId = stream.id; // Stream ID to pass to content script
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          if (tabs.length > 0) {
+            chrome.tabs.sendMessage(tabs[0].id, {
+              type: "PROCESS_AUDIO",
+              streamId: streamId,
+              language: language,
+            });
+            sendResponse({ success: true });
+          } else {
+            console.error("No active tab found.");
+            sendResponse({ success: false, error: "No active tab found." });
+          }
+        });
+      } else {
+        console.error("Failed to capture tab audio.");
+        sendResponse({ success: false, error: "Failed to capture tab audio." });
+      }
+    });
+
+    return true;
+  }
+});*/
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "START_TRANSLATION") {
+    const language = message.language;
+    /*
+    // Start desktop capture
+    chrome.desktopCapture.chooseDesktopMedia(
+      ["audio"],
+      sender.tab,
+      (streamId) => {
+        if (!streamId) {
+          console.error("Stream selection canceled or failed.");
+          sendResponse({ success: false, error: "Stream selection failed." });
+          return;
+        }
+
+        navigator.mediaDevices
+          .getUserMedia({
+            audio: {
+              mandatory: {
+                chromeMediaSource: "desktop",
+                chromeMediaSourceId: streamId,
+              },
+            },
+          })
+          .then((stream) => {
+            console.log("Audio stream captured.");
+            processAudioStream(stream, language, sender.tab.id, sendResponse);
+          })
+          .catch((error) => {
+            console.error("Error capturing audio:", error);
+            sendResponse({ success: false, error: error.message });
+          });
+      }
+    );*/
+    async function captureTabAudio() {
+      try {
+          // Request access to display capture
+          const stream = await navigator.mediaDevices.getDisplayMedia({
+              video: false,
+              audio: {
+                  mandatory: {
+                      chromeMediaSource: 'tab', // Capture tab audio
+                      chromeMediaSourceId: 'system'
+                  }
+              }
+          });
+  
+          console.log("Tab audio stream captured:", stream);
+          return stream;
+      } catch (error) {
+          console.error("Error capturing tab audio:", error);
+          throw new Error("Unable to capture tab audio. Ensure permissions are granted.");
+      }
+  }
+const stream_recieved= captureTabAudio();
+if (stream_recieved)
+  {const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioContext.createMediaStreamSource(stream);
+  
+    // Load the audio worklet
+    audioContext.audioWorklet
+      .addModule("audio-processor.js")
+      .then(() => {
+        const workletNode = new AudioWorkletNode(audioContext, "audio-processor");
+  
+        // Process the audio stream in real time
+        workletNode.port.onmessage = async (event) => {
+          const rawAudioData = event.data;
+  
+          try {
+            const audioData = await processWithGeminiNano(rawAudioData); // Process with Gemini Nano
+            const translatedText = await sendForTranslation(audioData, language); // Translate the text
+  
+            // Send subtitles back to the content script
+            chrome.scripting.executeScript({
+              target: { tabId },
+              func: showSubtitles,
+              args: [translatedText],
+            });
+  
+            sendResponse({ success: true });
+          } catch (error) {
+            console.error("Error during audio processing:", error);
+            sendResponse({ success: false, error: error.message });
+          }
+        };
+  
+        // Connect the audio worklet
+        source.connect(workletNode);
+        workletNode.connect(audioContext.destination);
+      })
+      .catch((error) => {
+        console.error("Failed to load audio processor:", error);
+        sendResponse({ success: false, error: error.message });
+      });
+  }}  
+/*
+    return true; // Keep the message channel open for asynchronous response
+  }
+});
+
+// Process the audio stream
+function processAudioStream(stream, language, tabId, sendResponse) {
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const source = audioContext.createMediaStreamSource(stream);
+
+  // Load the audio worklet
+  audioContext.audioWorklet
+    .addModule("audio-processor.js")
+    .then(() => {
+      const workletNode = new AudioWorkletNode(audioContext, "audio-processor");
+
+      // Process the audio stream in real time
+      workletNode.port.onmessage = async (event) => {
+        const rawAudioData = event.data;
+
+        try {
+          const audioData = await processWithGeminiNano(rawAudioData); // Process with Gemini Nano
+          const translatedText = await sendForTranslation(audioData, language); // Translate the text
+
+          // Send subtitles back to the content script
+          chrome.scripting.executeScript({
+            target: { tabId },
+            func: showSubtitles,
+            args: [translatedText],
+          });
+
+          sendResponse({ success: true });
+        } catch (error) {
+          console.error("Error during audio processing:", error);
+          sendResponse({ success: false, error: error.message });
+        }
+      };
+
+      // Connect the audio worklet
+      source.connect(workletNode);
+      workletNode.connect(audioContext.destination);
+    })
+    .catch((error) => {
+      console.error("Failed to load audio processor:", error);
+      sendResponse({ success: false, error: error.message });
+    });
+}
+    */
+
+// Function to handle transcription and translation
+async function sendForTranslation(audioData, language) {
+  try {
+    /*
+    // Using Chrome Speech to Text API
+    const encodedAudioData = btoa(
+      String.fromCharCode.apply(null, new Uint8Array(audioData))
+    );
+    const audioData_2 = { audio: encodedAudioData };*/
+
+    const processedAudio = await processWithGeminiNano(audioData);
+    const transcription = await sendForTranscription(processedAudio); // Audio to Text
+
+    // Use Chrome AI Translation API for translation
+    const translatedText = await translateText(transcription, {
+      targetLanguage: language,
+    }); // Translation API
+
+    return translatedText; // Return the translated subtitle
+  } catch (error) {
+    console.error("Error in AI processing:", error);
+    throw error;
+  }
+}
+
+async function sendForTranscription(audioData) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+    const url = `https://speech.googleapis.com/v1p1beta1/speech:recognize?key=${apiKey}`;
+
+    const requestPayload = {
+      config: {
+        encoding: "LINEAR16",
+        sampleRateHertz: 16000,
+        languageCode: "hi-IN", // Replace with the speaker's language
+      },
+      audio: {
+        content: audioData, // Base64-encoded audio data
+      },
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.results[0].alternatives[0].transcript;
+  } catch (error) {
+    console.error("Speech-to-Text API Error:", error);
+    throw error;
+  }
+}
+
+async function translateText(text, targetLanguage) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+    const url = `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`;
+
+    const requestPayload = {
+      q: text,
+      target: targetLanguage,
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.data.translations[0].translatedText;
+  } catch (error) {
+    console.error("Translation API Error:", error);
+    throw error;
+  }
+}
+async function processWithGeminiNano(data) {
+  try {
+    const apiKey = "AIzaSyDMxb7QU1OXDvhnn0GSI2OgbnhaGnc_hTQ"; // Replace with your Gemini Nano key
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+
+    const result = await response.json();
+    return result; // Process the response as needed
+  } catch (error) {
+    console.error("Gemini Nano API Error:", error);
+    throw error;
+  }
+}
+// Inject subtitles into the current tab
+function showSubtitles(subtitle) {
+  let subtitleBox = document.getElementById("realTimeSubtitle");
+  if (!subtitleBox) {
+    subtitleBox = document.createElement("div");
+    subtitleBox.id = "realTimeSubtitle";
+    subtitleBox.style.position = "fixed";
+    subtitleBox.style.bottom = "20px";
+    subtitleBox.style.left = "20px";
+    subtitleBox.style.backgroundColor = "rgba(0,0,0,0.8)";
+    subtitleBox.style.color = "white";
+    subtitleBox.style.padding = "10px";
+    subtitleBox.style.borderRadius = "5px";
+    subtitleBox.style.zIndex = "9999";
+    document.body.appendChild(subtitleBox);
+  }
+  subtitleBox.innerText = subtitle;
+}
+
+
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "START_TRANSLATION") {
+    const language = message.language; // Target language for translation
+
+    // Function to capture tab audio
+    async function captureTabAudio() {
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          audio: true, // Capture only audio
+          video: false,
+        });
+
+        console.log("Tab audio stream captured:", stream);
+        return stream;
+      } catch (error) {
+        console.error("Error capturing tab audio:", error);
+        throw new Error(
+          "Unable to capture tab audio. Ensure permissions are granted."
+        );
+      }
+    }
+
+    // Process the captured audio
+    captureTabAudio()
+      .then((stream) => {
+        const audioContext = new (window.AudioContext ||
+          window.webkitAudioContext)();
+        const source = audioContext.createMediaStreamSource(stream);
+
+        // Use the Speech-to-Text API for transcription
+        processAudioStream(source, language, sendResponse);
+      })
+      .catch((error) => {
+        console.error("Error during tab audio capture:", error);
+        sendResponse({ success: false, error: error.message });
+      });
+
+    return true; // Keep the message channel open for asynchronous response
+  }
+});
+
+// Function to process the audio stream
+async function processAudioStream(source, targetLanguage, sendResponse) {
+  const audioChunks = [];
+  const recorder = new MediaRecorder(source.stream);
+
+  recorder.ondataavailable = (event) => {
+    audioChunks.push(event.data);
+  };
+
+  recorder.onstop = async () => {
+    const blob = new Blob(audioChunks, { type: "audio/*" });
+    const audioData = await blobToBase64(blob);
+
+    try {
+      // Transcribe the audio to text
+      processedAudioData = await processWithGeminiNano(audioData);
+      const transcription = await sendForTranscription(processedAudioData);
+
+      // Translate the transcribed text
+      const translatedText = await translateText(transcription, targetLanguage);
+
+      // Display subtitles on the page
+      chrome.scripting.executeScript({
+        target: { tabId: sender.tab.id },
+        func: showSubtitles,
+        args: [translatedText],
+      });
+
+      sendResponse({ success: true });
+    } catch (error) {
+      console.error("Error processing audio:", error);
+      sendResponse({ success: false, error: error.message });
+    }
+  };
+
+  recorder.start(1000); // Record in 1-second chunks
+}
+
+// Utility function to convert a Blob to Base64
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+// Function to send audio data for transcription
+async function sendForTranscription(audioData) {
+  const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+  const url = `https://speech.googleapis.com/v1p1beta1/speech:recognize?key=${apiKey}`;
+
+  const requestPayload = {
+    config: {
+      encoding: "LINEAR16",
+      sampleRateHertz: 16000,
+      languageCode: "hi-IN", // Source language (e.g., Korean)
+    },
+    audio: {
+      content: audioData,
+    },
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(requestPayload),
+  });
+
+  const result = await response.json();
+  return result.results[0].alternatives[0].transcript;
+}
+
+// Function to translate text
+async function translateText(text, targetLanguage) {
+  const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+  const url = `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`;
+
+  const requestPayload = {
+    q: text,
+    target: targetLanguage,
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(requestPayload),
+  });
+
+  const result = await response.json();
+  return result.data.translations[0].translatedText;
+}
+
+// Inject subtitles into the current tab
+function showSubtitles(subtitle) {
+  let subtitleBox = document.getElementById("realTimeSubtitle");
+  if (!subtitleBox) {
+    subtitleBox = document.createElement("div");
+    subtitleBox.id = "realTimeSubtitle";
+    subtitleBox.style.position = "fixed";
+    subtitleBox.style.bottom = "20px";
+    subtitleBox.style.left = "20px";
+    subtitleBox.style.backgroundColor = "rgba(0,0,0,0.8)";
+    subtitleBox.style.color = "white";
+    subtitleBox.style.padding = "10px";
+    subtitleBox.style.borderRadius = "5px";
+    subtitleBox.style.zIndex = "9999";
+    document.body.appendChild(subtitleBox);
+  }
+  subtitleBox.innerText = subtitle;
+}
+async function processWithGeminiNano(data) {
+  try {
+    const apiKey = "AIzaSyDMxb7QU1OXDvhnn0GSI2OgbnhaGnc_hTQ"; // Replace with your Gemini Nano key
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+
+    const result = await response.json();
+    return result; // Process the response as needed
+  } catch (error) {
+    console.error("Gemini Nano API Error:", error);
+    throw error;
+  }
+}
+
+
+
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "START_TRANSLATION") {
+    const language = message.language;
+    // Get the active tab using chrome.tabs.query
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs.length === 0) {
+        console.error("No active tab found.");
+        sendResponse({
+          success: false,
+          error: "No active tab found.",
+        });
+        return;
+      }
+
+      const activeTab = tabs[0]; // The first tab in the array
+      console.log("Active tab:", activeTab);
+
+      // Send subtitles back to the active tab
+      chrome.scripting.executeScript({
+        target: { tabId: activeTab.id },
+        func: showSubtitles,
+        args: [translatedText],
+      });
+
+      // Keep the response channel open for async response
+
+      return true;
+    });
+  }
+});
+
+// Helper function to show subtitles in the active tab
+function showSubtitles(subtitle) {
+  let subtitleBox = document.getElementById("realTimeSubtitle");
+  if (!subtitleBox) {
+    subtitleBox = document.createElement("div");
+    subtitleBox.id = "realTimeSubtitle";
+    subtitleBox.style.position = "fixed";
+    subtitleBox.style.bottom = "20px";
+    subtitleBox.style.left = "20px";
+    subtitleBox.style.backgroundColor = "rgba(0,0,0,0.8)";
+    subtitleBox.style.color = "white";
+    subtitleBox.style.padding = "10px";
+    subtitleBox.style.borderRadius = "5px";
+    subtitleBox.style.zIndex = "9999";
+    document.body.appendChild(subtitleBox);
+  }
+  subtitleBox.innerText = subtitle;
+}
+// Function to handle transcription and translation
+async function sendForTranslation(audioData, language) {
+  try {
+    /*
+    // Using Chrome Speech to Text API
+    const encodedAudioData = btoa(
+      String.fromCharCode.apply(null, new Uint8Array(audioData))
+    );
+    const audioData_2 = { audio: encodedAudioData };*/
+
+    const transcription = await sendForTranscription(audioData); // Audio to Text
+
+    // Use Chrome AI Translation API for translation
+    const translatedText = await translateText(transcription, {
+      targetLanguage: language,
+    }); // Translation API
+
+    return translatedText; // Return the translated subtitle
+  } catch (error) {
+    console.error("Error in AI processing:", error);
+    throw error;
+  }
+}
+
+async function sendForTranscription(audioData) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+    const url = `https://speech.googleapis.com/v1p1beta1/speech:recognize?key=${apiKey}`;
+
+    const requestPayload = {
+      config: {
+        encoding: "LINEAR16",
+        sampleRateHertz: 16000,
+        languageCode: "hi-IN", // Replace with the speaker's language
+      },
+      audio: {
+        content: audioData, // Base64-encoded audio data
+      },
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.results[0].alternatives[0].transcript;
+  } catch (error) {
+    console.error("Speech-to-Text API Error:", error);
+    throw error;
+  }
+}
+
+async function translateText(text, targetLanguage) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+    const url = `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`;
+
+    const requestPayload = {
+      q: text,
+      target: targetLanguage,
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.data.translations[0].translatedText;
+  } catch (error) {
+    console.error("Translation API Error:", error);
+    throw error;
+  }
+}
+async function processWithGeminiNano(data) {
+  try {
+    const apiKey = "AIzaSyDMxb7QU1OXDvhnn0GSI2OgbnhaGnc_hTQ"; // Replace with your Gemini Nano key
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+
+    const result = await response.json();
+    return result; // Process the response as needed
+  } catch (error) {
+    console.error("Gemini Nano API Error:", error);
+    throw error;
+  }
+}
+// Request microphone permission dynamically
+navigator.mediaDevices.getUserMedia({ audio: true }).then((micStream) => {
+  console.log("Microphone access granted");
+
+  // Request desktop capture for the current tab
+  chrome.desktopCapture.chooseDesktopMedia(
+    ["audio", "tab"],
+    activeTab,
+    (streamId) => {
+      if (!streamId) {
+        console.error("Failed to get stream ID.");
+        sendResponse({
+          success: false,
+          error: "Failed to capture tab audio.",
+        });
+        return;
+      }
+
+      // Use getUserMedia to capture the audio stream
+      navigator.mediaDevices
+        .getUserMedia({
+          audio: {
+            mandatory: {
+              chromeMediaSource: "desktop",
+              chromeMediaSourceId: streamId,
+            },
+          },
+          video: false,
+        })
+        .then((stream) => {
+          console.log("Audio stream captured successfully.");
+          const audioContext = new (window.AudioContext ||
+            window.webkitAudioContext)();
+          const source = audioContext.createMediaStreamSource(stream);
+
+          // Process audio stream using an AudioWorklet
+          audioContext.audioWorklet
+            .addModule("audio-processor.js")
+            .then(() => {
+              const workletNode = new AudioWorkletNode(
+                audioContext,
+                "audio-processor"
+              );
+
+              // Listen for processed audio data
+              workletNode.port.onmessage = async (event) => {
+                const rawAudioData = event.data;
+
+                try {
+                  const processedAudio = await processWithGeminiNano(
+                    rawAudioData
+                  ); // Process the audio
+                  const translatedText = await sendForTranslation(
+                    processedAudio,
+                    language
+                  ); // Translate the text
+
+                  console.log("Translated text:", translatedText);
+
+                  sendResponse({ success: true });
+                } catch (error) {
+                  console.error("Error during audio processing:", error);
+                  sendResponse({ success: false, error: error.message });
+                }
+              };
+
+              // Connect audio stream to the worklet
+              source.connect(workletNode);
+              workletNode.connect(audioContext.destination);
+            })
+            .catch((error) => {
+              console.error("Audio worklet error:", error);
+              sendResponse({ success: false, error: error.message });
+            });
+        })
+        .catch((error) => {
+          console.error("getUserMedia error:", error);
+          sendResponse({ success: false, error: error.message });
+        });
+    }
+  );
+});
+
+function startAudioCapture() {
+  // Request microphone permission dynamically
+  navigator.mediaDevices.getUserMedia({ audio: true }).then((micStream) => {
+    console.log("Microphone access granted");
+
+    // Request desktop capture for the current tab
+    chrome.desktopCapture.chooseDesktopMedia(
+      ["audio", "tab"],
+      activeTab,
+      (streamId) => {
+        if (!streamId) {
+          console.error("Failed to get stream ID.");
+          sendResponse({
+            success: false,
+            error: "Failed to capture tab audio.",
+          });
+          return;
+        }
+
+        // Use getUserMedia to capture the audio stream
+        navigator.mediaDevices
+          .getUserMedia({
+            audio: {
+              mandatory: {
+                chromeMediaSource: "desktop",
+                chromeMediaSourceId: streamId,
+              },
+            },
+            video: false,
+          })
+          .then((stream) => {
+            console.log("Audio stream captured successfully.");
+            const audioContext = new (window.AudioContext ||
+              window.webkitAudioContext)();
+            const source = audioContext.createMediaStreamSource(stream);
+
+            // Process audio stream using an AudioWorklet
+            audioContext.audioWorklet
+              .addModule("audio-processor.js")
+              .then(() => {
+                const workletNode = new AudioWorkletNode(
+                  audioContext,
+                  "audio-processor"
+                );
+
+                // Listen for processed audio data
+                workletNode.port.onmessage = async (event) => {
+                  const rawAudioData = event.data;
+
+                  try {
+                    const processedAudio = await processWithGeminiNano(
+                      rawAudioData
+                    ); // Process the audio
+                    const translatedText = await sendForTranslation(
+                      processedAudio,
+                      language
+                    ); // Translate the text
+
+                    console.log("Translated text:", translatedText);
+
+                    sendResponse({ success: true });
+                  } catch (error) {
+                    console.error("Error during audio processing:", error);
+                    sendResponse({ success: false, error: error.message });
+                  }
+                };
+
+                // Connect audio stream to the worklet
+                source.connect(workletNode);
+                workletNode.connect(audioContext.destination);
+              })
+              .catch((error) => {
+                console.error("Audio worklet error:", error);
+                sendResponse({ success: false, error: error.message });
+              });
+          })
+          .catch((error) => {
+            console.error("getUserMedia error:", error);
+            sendResponse({ success: false, error: error.message });
+          });
+      }
+    );
+  });
+}
+
+background.js
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "START_TRANSLATION") {
+    const language = message.language;
+
+    // Get the active tab using chrome.tabs.query
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs.length === 0) {
+        console.error("No active tab found.");
+        sendResponse({
+          success: false,
+          error: "No active tab found.",
+        });
+        return;
+      }
+      const activeTab = tabs[0]; // The first tab in the array
+      console.log("Active tab:", activeTab);
+      navigator.mediaDevices.getUserMedia({ audio: true }).then((micStream) => {
+        console.log("Microphone access granted");
+
+        // Request desktop capture for the current tab
+        chrome.desktopCapture.chooseDesktopMedia(
+          ["audio", "tab"],
+          activeTab,
+          (streamId) => {
+            if (!streamId) {
+              console.error("Failed to get stream ID.");
+              return;
+            }
+            console.log("stream ID", streamID);
+            // Use getUserMedia to capture the audio stream
+            navigator.mediaDevices
+              .getUserMedia({
+                audio: {
+                  mandatory: {
+                    chromeMediaSource: "desktop",
+                    chromeMediaSourceId: streamId,
+                  },
+                },
+                video: false,
+              })
+              .then((stream) => {
+                console.log("Audio stream captured successfully.");
+                const audioContext = new (window.AudioContext ||
+                  window.webkitAudioContext)();
+                const source = audioContext.createMediaStreamSource(stream);
+
+                // Process audio stream using an AudioWorklet
+                audioContext.audioWorklet
+                  .addModule("audio-processor.js")
+                  .then(() => {
+                    const workletNode = new AudioWorkletNode(
+                      audioContext,
+                      "audio-processor"
+                    );
+
+                    // Listen for processed audio data
+                    workletNode.port.onmessage = async (event) => {
+                      const rawAudioData = event.data;
+                      try {
+                        const processedAudio = await processWithGeminiNano(
+                          rawAudioData
+                        ); // Process the audio
+                        const translatedText = await sendForTranslation(
+                          processedAudio,
+                          language
+                        ); // Translate the text
+                        console.log("Translated text:", translatedText);
+
+                        // Call showSubtitles function to display the translated text
+                        showSubtitles(translatedText);
+                      } catch (error) {
+                        console.error("Error during audio processing:", error);
+                      }
+                    };
+
+                    // Connect audio stream to the worklet
+                    source.connect(workletNode);
+                    workletNode.connect(audioContext.destination);
+                  })
+                  .catch((error) => {
+                    console.error("Audio worklet error:", error);
+                  });
+              })
+              .catch((error) => {
+                console.error("getUserMedia error:", error);
+              });
+          }
+        );
+      });
+
+      // Send the startAudioCapture and showSubtitles functions to the active tab
+      chrome.scripting.executeScript({
+        target: { tabId: activeTab.id },
+        func: showSubtitles,
+        args: [translatedText],
+      });
+
+      // Keep the response channel open for async response
+      return true;
+    });
+  }
+});
+
+// Function to display subtitles in the active tab
+function showSubtitles(subtitle) {
+  let subtitleBox = document.getElementById("realTimeSubtitle");
+  if (!subtitleBox) {
+    subtitleBox = document.createElement("div");
+    subtitleBox.id = "realTimeSubtitle";
+    subtitleBox.style.position = "fixed";
+    subtitleBox.style.bottom = "20px";
+    subtitleBox.style.left = "20px";
+    subtitleBox.style.backgroundColor = "rgba(0,0,0,0.8)";
+    subtitleBox.style.color = "white";
+    subtitleBox.style.padding = "10px";
+    subtitleBox.style.borderRadius = "5px";
+    subtitleBox.style.zIndex = "9999";
+    document.body.appendChild(subtitleBox);
+  }
+  subtitleBox.innerText = subtitle;
+}
+// Function to handle transcription and translation
+async function sendForTranslation(audioData, language) {
+  try {
+    /*
+    // Using Chrome Speech to Text API
+    const encodedAudioData = btoa(
+      String.fromCharCode.apply(null, new Uint8Array(audioData))
+    );
+    const audioData_2 = { audio: encodedAudioData };*/
+
+    const transcription = await sendForTranscription(audioData); // Audio to Text
+
+    // Use Chrome AI Translation API for translation
+    const translatedText = await translateText(transcription, {
+      targetLanguage: language,
+    }); // Translation API
+
+    return translatedText; // Return the translated subtitle
+  } catch (error) {
+    console.error("Error in AI processing:", error);
+    throw error;
+  }
+}
+
+async function sendForTranscription(audioData) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+    const url = `https://speech.googleapis.com/v1p1beta1/speech:recognize?key=${apiKey}`;
+
+    const requestPayload = {
+      config: {
+        encoding: "LINEAR16",
+        sampleRateHertz: 16000,
+        languageCode: "hi-IN", // Replace with the speaker's language
+      },
+      audio: {
+        content: audioData, // Base64-encoded audio data
+      },
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.results[0].alternatives[0].transcript;
+  } catch (error) {
+    console.error("Speech-to-Text API Error:", error);
+    throw error;
+  }
+}
+
+async function translateText(text, targetLanguage) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+    const url = `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`;
+
+    const requestPayload = {
+      q: text,
+      target: targetLanguage,
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.data.translations[0].translatedText;
+  } catch (error) {
+    console.error("Translation API Error:", error);
+    throw error;
+  }
+}
+async function processWithGeminiNano(data) {
+  try {
+    const apiKey = "AIzaSyDMxb7QU1OXDvhnn0GSI2OgbnhaGnc_hTQ"; // Replace with your Gemini Nano key
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+
+    const result = await response.json();
+    return result; // Process the response as needed
+  } catch (error) {
+    console.error("Gemini Nano API Error:", error);
+    throw error;
+  }
+}
+
+content.js
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "PROCESS_AUDIO") {
+    const { streamId, language } = message; // Extract streamId and language from the message
+
+    // Initialize AudioContext
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) {
+      console.error("Web Audio API is not supported in this browser.");
+      return;
+    }
+    const audioContext = new AudioContext();
+
+    // Get audio stream
+    navigator.mediaDevices
+      .getUserMedia({ audio: { deviceId: streamId } })
+      .then((stream) => {
+        const source = audioContext.createMediaStreamSource(stream);
+
+        // Load the audio-processor.js file as a module
+        audioContext.audioWorklet
+          .addModule("audio-processor.js")
+          .then(() => {
+            const workletNode = new AudioWorkletNode(
+              audioContext,
+              "audio-processor"
+            );
+
+            // Listen for processed audio data
+            workletNode.port.onmessage = async (event) => {
+              const rawAudioData = event.data; // This is the raw audio buffer
+              const encodedAudioData = btoa(
+                String.fromCharCode.apply(null, new Uint8Array(rawAudioData))
+              );
+              const dataPayload = { audio: encodedAudioData };
+
+              // Process audio with Gemini Nano and translate
+              try {
+                // Process with Gemini Nano
+                const audioData = await processWithGeminiNano(dataPayload);
+                try {
+                  // Send audioData to transcription and translation API
+                  const translatedText = await sendForTranslation(
+                    audioData,
+                    language
+                  );
+
+                  // Display subtitles in the meeting tab
+                  chrome.scripting.executeScript({
+                    target: { tabId: sender.tab.id },
+                    func: showSubtitles,
+                    args: [translatedText],
+                  });
+                } catch (error) {
+                  console.error(
+                    "Error during transcription or translation:",
+                    error
+                  );
+                }
+              } catch (error) {
+                console.error("Error during processing:", error);
+              }
+            };
+
+            // Connect audio stream to the worklet
+            source.connect(workletNode);
+            workletNode.connect(audioContext.destination);
+          })
+          .catch((error) =>
+            console.error("Failed to load audio processor:", error)
+          );
+      })
+      .catch((error) => {
+        console.error("Failed to get user media:", error);
+      });
+  }
+});
+
+// Function to handle transcription and translation
+async function sendForTranslation(audioData, language) {
+  try {
+    // Using Chrome Speech to Text API
+    const encodedAudioData = btoa(
+      String.fromCharCode.apply(null, new Uint8Array(audioData))
+    );
+    const audioData_2 = { audio: encodedAudioData };
+
+    const processedAudio = await processWithGeminiNano(audioData_2);
+    const transcription = await sendForTranscription(processedAudio); // Audio to Text
+
+    // Use Chrome AI Translation API for translation
+    const translatedText = await translateText(transcription, {
+      targetLanguage: language,
+    }); // Translation API
+
+    return translatedText; // Return the translated subtitle
+  } catch (error) {
+    console.error("Error in AI processing:", error);
+    throw error;
+  }
+}
+
+async function sendForTranscription(audioData) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+    const url = `https://speech.googleapis.com/v1p1beta1/speech:recognize?key=${apiKey}`;
+
+    const requestPayload = {
+      config: {
+        encoding: "LINEAR16",
+        sampleRateHertz: 16000,
+        languageCode: "hi-IN", // Replace with the speaker's language
+      },
+      audio: {
+        content: audioData, // Base64-encoded audio data
+      },
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.results[0].alternatives[0].transcript;
+  } catch (error) {
+    console.error("Speech-to-Text API Error:", error);
+    throw error;
+  }
+}
+
+async function translateText(text, targetLanguage) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+    const url = `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`;
+
+    const requestPayload = {
+      q: text,
+      target: targetLanguage,
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.data.translations[0].translatedText;
+  } catch (error) {
+    console.error("Translation API Error:", error);
+    throw error;
+  }
+}
+async function processWithGeminiNano(data) {
+  try {
+    const apiKey = "AIzaSyDMxb7QU1OXDvhnn0GSI2OgbnhaGnc_hTQ"; // Replace with your Gemini Nano key
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+
+    const result = await response.json();
+    return result; // Process the response as needed
+  } catch (error) {
+    console.error("Gemini Nano API Error:", error);
+    throw error;
+  }
+}
+
+// Inject subtitles into the current tab
+function showSubtitles(subtitle) {
+  let subtitleBox = document.getElementById("realTimeSubtitle");
+  if (!subtitleBox) {
+    subtitleBox = document.createElement("div");
+    subtitleBox.id = "realTimeSubtitle";
+    subtitleBox.style.position = "fixed";
+    subtitleBox.style.bottom = "20px";
+    subtitleBox.style.left = "20px";
+    subtitleBox.style.backgroundColor = "rgba(0,0,0,0.8)";
+    subtitleBox.style.color = "white";
+    subtitleBox.style.padding = "10px";
+    subtitleBox.style.borderRadius = "5px";
+    subtitleBox.style.zIndex = "9999";
+    document.body.appendChild(subtitleBox);
+  }
+  subtitleBox.innerText = subtitle;
+}
+
+
+background.js:
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "START_TRANSLATION") {
+    const language = message.language;
+
+    // Get the active tab
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs.length === 0) {
+        console.error("No active tab found.");
+        sendResponse({ success: false, error: "No active tab found." });
+        return;
+      }
+
+      const activeTab = tabs[0];
+
+      // Inject content script into the active tab
+      chrome.scripting.executeScript(
+        {
+          target: { tabId: activeTab.id },
+          files: ["content.js"],
+        },
+        () => {
+          // Send a message to the content script to start translation
+          chrome.tabs.sendMessage(
+            activeTab.id,
+            { type: "START_TRANSLATION", language },
+            (response) => {
+              sendResponse(response);
+            }
+          );
+        }
+      );
+
+      // Keep the response channel open
+      return true;
+    });
+  }
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "REQUEST_DESKTOP_CAPTURE") {
+    chrome.desktopCapture.chooseDesktopMedia(["audio", "tab"], (streamId) => {
+      sendResponse(streamId);
+    });
+
+    // Keep the response channel open
+    return true;
+  }
+});
+
+content.js:
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "START_TRANSLATION") {
+    const language = message.language;
+
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((micStream) => {
+        console.log("Microphone access granted");
+
+        // Request desktop capture for the current tab
+        chrome.runtime.sendMessage(
+          { type: "REQUEST_DESKTOP_CAPTURE" },
+          (streamId) => {
+            if (!streamId) {
+              console.error("Failed to get stream ID.");
+              return;
+            }
+
+            navigator.mediaDevices
+              .getUserMedia({
+                audio: {
+                  mandatory: {
+                    chromeMediaSource: "desktop",
+                    chromeMediaSourceId: streamId,
+                  },
+                },
+                video: false,
+              })
+              .then((stream) => {
+                console.log("Audio stream captured successfully.");
+                const audioContext = new (window.AudioContext ||
+                  window.webkitAudioContext)();
+                const source = audioContext.createMediaStreamSource(stream);
+
+                audioContext.audioWorklet
+                  .addModule("audio-processor.js")
+                  .then(() => {
+                    const workletNode = new AudioWorkletNode(
+                      audioContext,
+                      "audio-processor"
+                    );
+
+                    workletNode.port.onmessage = async (event) => {
+                      const rawAudioData = event.data;
+                      try {
+                        const processedAudio = await processWithGeminiNano(
+                          rawAudioData
+                        ); // Process the audio
+                        const translatedText = await sendForTranslation(
+                          processedAudio,
+                          language
+                        ); // Translate the text
+                        console.log("Translated text:", translatedText);
+
+                        showSubtitles(translatedText);
+                      } catch (error) {
+                        console.error("Error during audio processing:", error);
+                      }
+                    };
+
+                    source.connect(workletNode);
+                    workletNode.connect(audioContext.destination);
+                  })
+                  .catch((error) => {
+                    console.error("Audio worklet error:", error);
+                  });
+              })
+              .catch((error) => {
+                console.error("getUserMedia error:", error);
+              });
+          }
+        );
+      })
+      .catch((error) => {
+        console.error("Microphone access error:", error);
+      });
+  }
+});
+
+// Function to display subtitles
+function showSubtitles(subtitle) {
+  let subtitleBox = document.getElementById("realTimeSubtitle");
+  if (!subtitleBox) {
+    subtitleBox = document.createElement("div");
+    subtitleBox.id = "realTimeSubtitle";
+    subtitleBox.style.position = "fixed";
+    subtitleBox.style.bottom = "20px";
+    subtitleBox.style.left = "20px";
+    subtitleBox.style.backgroundColor = "rgba(0,0,0,0.8)";
+    subtitleBox.style.color = "white";
+    subtitleBox.style.padding = "10px";
+    subtitleBox.style.borderRadius = "5px";
+    subtitleBox.style.zIndex = "9999";
+    document.body.appendChild(subtitleBox);
+  }
+  subtitleBox.innerText = subtitle;
+}
+
+// Function to handle transcription and translation
+async function sendForTranslation(audioData, language) {
+  try {
+    /*
+    // Using Chrome Speech to Text API
+    const encodedAudioData = btoa(
+      String.fromCharCode.apply(null, new Uint8Array(audioData))
+    );
+    const audioData_2 = { audio: encodedAudioData };*/
+
+    const transcription = await sendForTranscription(audioData); // Audio to Text
+
+    // Use Chrome AI Translation API for translation
+    const translatedText = await translateText(transcription, {
+      targetLanguage: language,
+    }); // Translation API
+
+    return translatedText; // Return the translated subtitle
+  } catch (error) {
+    console.error("Error in AI processing:", error);
+    throw error;
+  }
+}
+
+async function sendForTranscription(audioData) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+    const url = `https://speech.googleapis.com/v1p1beta1/speech:recognize?key=${apiKey}`;
+
+    const requestPayload = {
+      config: {
+        encoding: "LINEAR16",
+        sampleRateHertz: 16000,
+        languageCode: "hi-IN", // Replace with the speaker's language
+      },
+      audio: {
+        content: audioData, // Base64-encoded audio data
+      },
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.results[0].alternatives[0].transcript;
+  } catch (error) {
+    console.error("Speech-to-Text API Error:", error);
+    throw error;
+  }
+}
+
+async function translateText(text, targetLanguage) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+    const url = `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`;
+
+    const requestPayload = {
+      q: text,
+      target: targetLanguage,
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.data.translations[0].translatedText;
+  } catch (error) {
+    console.error("Translation API Error:", error);
+    throw error;
+  }
+}
+async function processWithGeminiNano(data) {
+  try {
+    const apiKey = "AIzaSyDMxb7QU1OXDvhnn0GSI2OgbnhaGnc_hTQ"; // Replace with your Gemini Nano key
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+
+    const result = await response.json();
+    return result; // Process the response as needed
+  } catch (error) {
+    console.error("Gemini Nano API Error:", error);
+    throw error;
+  }
+}
+
+"content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"]
+    }
+  ]
+
+
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "START_TRANSLATION") {
+    const language = message.language;
+
+    // Get the active tab using chrome.tabs.query
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs.length === 0) {
+        console.error("No active tab found.");
+        sendResponse({
+          success: false,
+          error: "No active tab found.",
+        });
+        return;
+      }
+      const activeTab = tabs[0]; // The first tab in the array
+      console.log("Active tab:", activeTab);
+
+      /*navigator.mediaDevices.getUserMedia({ audio: true }).then((micStream) => {
+        console.log("Microphone access granted");*/
+
+      // Request desktop capture for the current tab
+      chrome.desktopCapture.chooseDesktopMedia(
+        ["audio", "tab"],
+        activeTab,
+        (streamId) => {
+          if (!streamId) {
+            console.error("Failed to get stream ID.");
+            return;
+          }
+          /*
+            // Use getUserMedia to capture the audio stream
+            navigator.mediaDevices
+              .getUserMedia({
+                audio: {
+                  mandatory: {
+                    chromeMediaSource: "desktop",
+                    chromeMediaSourceId: streamId,
+                  },
+                },
+                video: false,
+              })*/
+          /* .then((stream) => {*/
+          if (stream) {
+            console.log("Audio stream captured successfully.");
+            const audioContext = new (window.AudioContext ||
+              window.webkitAudioContext)();
+            const source = audioContext.createMediaStreamSource(stream);
+
+            // Process audio stream using an AudioWorklet
+            audioContext.audioWorklet
+              .addModule("audio-processor.js")
+              .then(() => {
+                const workletNode = new AudioWorkletNode(
+                  audioContext,
+                  "audio-processor"
+                );
+
+                // Listen for processed audio data
+                workletNode.port.onmessage = async (event) => {
+                  const rawAudioData = event.data;
+                  try {
+                    const processedAudio = await processWithGeminiNano(
+                      rawAudioData
+                    ); // Process the audio
+                    const translatedText = await sendForTranslation(
+                      processedAudio,
+                      language
+                    ); // Translate the text
+                    console.log("Translated text:", translatedText);
+                    chrome.scripting.executeScript({
+                      target: { tabId: activeTab.id },
+                      func: showSubtitles,
+                      args: [translatedText], // Pass language to startAudioCapture function
+                    });
+                  } catch (error) {
+                    console.error("Error during audio processing:", error);
+                  }
+                };
+
+                // Connect audio stream to the worklet
+                source.connect(workletNode);
+                workletNode.connect(audioContext.destination);
+              })
+              .catch((error) => {
+                console.error("Audio worklet error:", error);
+              });
+          }
+          /*
+              .catch((error) => {
+                console.error("getUserMedia error:", error);*/
+        }
+      );
+      /*});*/
+      // Send the startAudioCapture and showSubtitles functions to the active tab
+    });
+
+    // Keep the response channel open for async response
+    return true;
+  }
+});
+
+/*
+// Function to start audio capture from the active tab
+function startAudioCapture(language) {
+  
+}*/
+
+// Function to display subtitles in the active tab
+function showSubtitles(subtitle) {
+  let subtitleBox = document.getElementById("realTimeSubtitle");
+  if (!subtitleBox) {
+    subtitleBox = document.createElement("div");
+    subtitleBox.id = "realTimeSubtitle";
+    subtitleBox.style.position = "fixed";
+    subtitleBox.style.bottom = "20px";
+    subtitleBox.style.left = "20px";
+    subtitleBox.style.backgroundColor = "rgba(0,0,0,0.8)";
+    subtitleBox.style.color = "white";
+    subtitleBox.style.padding = "10px";
+    subtitleBox.style.borderRadius = "5px";
+    subtitleBox.style.zIndex = "9999";
+    document.body.appendChild(subtitleBox);
+  }
+  subtitleBox.innerText = subtitle;
+}
+// Function to handle transcription and translation
+async function sendForTranslation(audioData, language) {
+  try {
+    // Using Chrome Speech to Text API
+    const encodedAudioData = btoa(
+      String.fromCharCode.apply(null, new Uint8Array(audioData))
+    );
+    const audioData_2 = { audio: encodedAudioData };
+
+    const processedAudio = await processWithGeminiNano(audioData_2);
+    const transcription = await sendForTranscription(processedAudio); // Audio to Text
+
+    // Use Chrome AI Translation API for translation
+    const translatedText = await translateText(transcription, {
+      targetLanguage: language,
+    }); // Translation API
+
+    return translatedText; // Return the translated subtitle
+  } catch (error) {
+    console.error("Error in AI processing:", error);
+    throw error;
+  }
+}
+
+async function sendForTranscription(audioData) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+    const url = `https://speech.googleapis.com/v1p1beta1/speech:recognize?key=${apiKey}`;
+
+    const requestPayload = {
+      config: {
+        encoding: "LINEAR16",
+        sampleRateHertz: 16000,
+        languageCode: "hi-IN", // Replace with the speaker's language
+      },
+      audio: {
+        content: audioData, // Base64-encoded audio data
+      },
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.results[0].alternatives[0].transcript;
+  } catch (error) {
+    console.error("Speech-to-Text API Error:", error);
+    throw error;
+  }
+}
+
+async function translateText(text, targetLanguage) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA";
+    const url = `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`;
+
+    const requestPayload = {
+      q: text,
+      target: targetLanguage,
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.data.translations[0].translatedText;
+  } catch (error) {
+    console.error("Translation API Error:", error);
+    throw error;
+  }
+}
+async function processWithGeminiNano(data) {
+  try {
+    const apiKey = "AIzaSyDMxb7QU1OXDvhnn0GSI2OgbnhaGnc_hTQ"; // Replace with your Gemini Nano key
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+
+    const result = await response.json();
+    return result; // Process the response as needed
+  } catch (error) {
+    console.error("Gemini Nano API Error:", error);
+    throw error;
+  }
+}
+
+
+
+
+
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "START_TRANSLATION") {
+    const language = message.language;
+
+    // Get the active tab using chrome.tabs.query
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs.length === 0) {
+        console.error("No active tab found.");
+        sendResponse({
+          success: false,
+          error: "No active tab found.",
+        });
+        return;
+      }
+      const activeTab = tabs[0]; // The first tab in the array
+      console.log("Active tab:", activeTab);
+
+      // Request desktop capture for the current tab
+      chrome.desktopCapture.chooseDesktopMedia(
+        ["audio", "tab"],
+        activeTab,
+        (streamId) => {
+          if (!streamId) {
+            console.error("Failed to get stream ID.");
+            sendResponse({
+              success: false,
+              error: "Failed to capture audio stream.",
+            });
+            return;
+          }
+
+          // Use getUserMedia to capture the audio stream
+          navigator.mediaDevices
+            .getUserMedia({
+              audio: {
+                mandatory: {
+                  chromeMediaSource: "desktop",
+                  chromeMediaSourceId: streamId,
+                },
+              },
+              video: false,
+            })
+            .then((stream) => {
+              console.log("Audio stream captured successfully.");
+              const audioContext = new (window.AudioContext ||
+                window.webkitAudioContext)();
+              const source = audioContext.createMediaStreamSource(stream);
+
+              // Process audio stream using an AudioWorklet
+              audioContext.audioWorklet
+                .addModule("audio-processor.js")
+                .then(() => {
+                  const workletNode = new AudioWorkletNode(
+                    audioContext,
+                    "audio-processor"
+                  );
+
+                  // Listen for processed audio data
+                  workletNode.port.onmessage = async (event) => {
+                    const rawAudioData = event.data;
+                    try {
+                      const translatedText = await processAndTranslateAudio(
+                        rawAudioData,
+                        language
+                      ); // Process and translate
+                      console.log("Translated text:", translatedText);
+
+                      chrome.scripting.executeScript({
+                        target: { tabId: activeTab.id },
+                        func: showSubtitles,
+                        args: [translatedText], // Pass language to showSubtitles function
+                      });
+                    } catch (error) {
+                      console.error("Error during audio processing:", error);
+                    }
+                  };
+
+                  // Connect audio stream to the worklet
+                  source.connect(workletNode);
+                  workletNode.connect(audioContext.destination);
+                })
+                .catch((error) => {
+                  console.error("Audio worklet error:", error);
+                });
+            })
+            .catch((error) => {
+              console.error("getUserMedia error:", error);
+            });
+        }
+      );
+    });
+
+    // Keep the response channel open for async response
+    return true;
+  }
+});
+
+// Function to display subtitles in the active tab
+function showSubtitles(subtitle) {
+  let subtitleBox = document.getElementById("realTimeSubtitle");
+  if (!subtitleBox) {
+    subtitleBox = document.createElement("div");
+    subtitleBox.id = "realTimeSubtitle";
+    subtitleBox.style.position = "fixed";
+    subtitleBox.style.bottom = "20px";
+    subtitleBox.style.left = "20px";
+    subtitleBox.style.backgroundColor = "rgba(0,0,0,0.8)";
+    subtitleBox.style.color = "white";
+    subtitleBox.style.padding = "10px";
+    subtitleBox.style.borderRadius = "5px";
+    subtitleBox.style.zIndex = "9999";
+    document.body.appendChild(subtitleBox);
+  }
+  subtitleBox.innerText = subtitle;
+}
+
+// Function to process and translate audio
+async function processAndTranslateAudio(rawAudioData, language) {
+  try {
+    const transcription = await sendForTranscription(rawAudioData); // Audio to Text
+    const translatedText = await translateText(transcription, language); // Translate text
+    return translatedText;
+  } catch (error) {
+    console.error("Error during processing and translation:", error);
+    throw error;
+  }
+}
+
+// Function to send audio data for transcription
+async function sendForTranscription(audioData) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA"; // Replace with your API key
+    const url = `https://speech.googleapis.com/v1p1beta1/speech:recognize?key=${apiKey}`;
+
+    const requestPayload = {
+      config: {
+        encoding: "LINEAR16",
+        sampleRateHertz: 16000,
+        languageCode: "hi-IN", // Replace with the source language
+      },
+      audio: {
+        content: audioData, // Base64-encoded audio data
+      },
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.results[0].alternatives[0].transcript;
+  } catch (error) {
+    console.error("Speech-to-Text API Error:", error);
+    throw error;
+  }
+}
+
+// Function to translate text
+async function translateText(text, targetLanguage) {
+  try {
+    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA"; // Replace with your API key
+    const url = `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`;
+
+    const requestPayload = {
+      q: text,
+      target: targetLanguage,
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const result = await response.json();
+    return result.data.translations[0].translatedText;
+  } catch (error) {
+    console.error("Translation API Error:", error);
+    throw error;
+  }
+}
+
+
+{
+  "manifest_version": 3,
+  "name": "Real-Time Meeting Translator",
+  "version": "1.0",
+  "permissions": [
+    "desktopCapture",
+    "tabs",
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "icon.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ]
+}
+
+
+(response) => {
+          
+          if (chrome.runtime.lastError) {
+            console.log(chrome.runtime.lastError.message);
+            console.error(chrome.runtime.lastError);
+            sendResponse({
+              success: false,
+              error: chrome.runtime.lastError.message,
+            });
+          } else {
+            sendResponse(response);
+          }
+        }
+
+
+        class AudioProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+  }
+
+  process(inputs, outputs, parameters) {
+    const input = inputs[0]; // This is the raw audio input
+    if (input) {
+      const audioData = input[0]; // Access the first channel's audio data
+      // You can send audioData to background.js or further processing
+      this.port.postMessage(audioData); // Send processed audio data back to the main thread
+    }
+    return true; // Keep processing audio data
+  }
+}
+
+registerProcessor("audio-processor", AudioProcessor);
+

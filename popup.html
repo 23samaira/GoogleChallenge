@@ -1,26 +1,14 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Meeting Translator</title>
-  <style>
-    body { font-family: Arial, sans-serif; padding: 10px; }
-    select, input, button { margin: 5px 0; padding: 5px; }
-  </style>
+  <title>Audio Translator</title>
 </head>
 <body>
-  <h3>Meeting Translator</h3>
-  <label for="meetingCode">Meeting Code:</label>
-  <input id="meetingCode" type="text" placeholder="Enter meeting code">
-  <br>
-  <label for="language">Select Language:</label>
-  <select id="language">
-    <option value="en">English</option>
-    <option value="ko">Korean</option>
-    <option value="es">Spanish</option>
-    <!-- Add more languages as needed -->
-  </select>
-  <br>
+  <h1>Audio Translator</h1>
+  <label for="language">Target Language:</label>
+  <input type="text" id="language" placeholder="e.g., en">
   <button id="start">Start Translation</button>
+
   <script src="popup.js"></script>
 </body>
 </html>

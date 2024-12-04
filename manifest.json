@@ -1,13 +1,24 @@
 {
-  "manifest_version": 3,
-  "name": "Real-Time Meeting Translator",
-  "description": "Provides real-time subtitles during meetings using Chrome AI APIs.",
+  "name": "Audio Translation Extension",
   "version": "1.0",
-  "permissions": ["activeTab", "tabCapture", "scripting"],
-  "host_permissions": ["https://meet.google.com/*"],
+  "manifest_version": 3,
+  "permissions": ["tabs", "desktopCapture", "scripting"],
   "background": {
     "service_worker": "background.js"
   },
+  "web_accessible_resources": [
+    {
+      "resources": ["scripts/audio-processor.js"],
+      "matches": ["*://*/*"]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://*/*"],
+      "js": ["content.js"]
+    }
+  ],
+  "host_permissions": ["*://*/*"],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
