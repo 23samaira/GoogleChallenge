@@ -99,7 +99,7 @@ async function processAndTranslateAudio(rawAudioData, language) {
 // Function to send audio data for transcription
 async function sendForTranscription(audioData) {
   try {
-    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA"; // Replace with your API key
+    const apiKey = "my API key"; // Replace with your API key
     const url = `https://speech.googleapis.com/v1p1beta1/speech:recognize?key=${apiKey}`;
 
     const requestPayload = {
@@ -124,36 +124,35 @@ async function sendForTranscription(audioData) {
 
     const result = await response.json();
     console.log(result);
-    /*
+
     if (!result.results || result.results.length === 0) {
       console.warn(
         "No transcription results. Possible reasons: silent audio, poor quality, or API limitations."
       );
       return ""; // Return empty string or an appropriate fallback
-    }*/
+    }
 
-    // if (
-    //   !result.results[0].alternatives ||
-    //   result.results[0].alternatives.length === 0
-    // ) {
-    //   console.warn("No alternatives found in the transcription results.");
-    //   return "";
-    // }
+    if (
+      !result.results[0].alternatives ||
+      result.results[0].alternatives.length === 0
+    ) {
+      console.warn("No alternatives found in the transcription results.");
+      return "";
+    }
 
-    // Check if the results array and nested properties exist
-    // if (
-    //   result.results &&
-    //   result.results[0] &&
-    //   result.results[0].alternatives &&
-    //   result.results[0].alternatives[0]
-    // ) {
-    //   return result.results[0].alternatives[0].transcript;
-    // } else {
-    //   console.warn(
-    //     "Incomplete response received. Returning partial result if available."
-    //   );
-    //   return result.results?.[0]?.alternatives?.[0]?.transcript || ""; // Use optional chaining
-    // }
+    if (
+      result.results &&
+      result.results[0] &&
+      result.results[0].alternatives &&
+      result.results[0].alternatives[0]
+    ) {
+      return result.results[0].alternatives[0].transcript;
+    } else {
+      console.warn(
+        "Incomplete response received. Returning partial result if available."
+      );
+      return result.results?.[0]?.alternatives?.[0]?.transcript || ""; // Use optional chaining
+    }
     return true;
   } catch (error) {
     console.error("Speech-to-Text API Error:", error);
@@ -164,7 +163,7 @@ async function sendForTranscription(audioData) {
 // Function to translate text
 async function translateText(text, targetLanguage) {
   try {
-    const apiKey = "AIzaSyAj6D4EqMF345FJisw8QeG4Nu6Y9ccEeXA"; // Replace with your API key
+    const apiKey = "my API key"; // Replace with your API key
     const url = `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`;
 
     const requestPayload = {
